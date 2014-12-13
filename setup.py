@@ -8,5 +8,5 @@ setup(name='iomidi',
     author='Erdi Aker',
     author_email='erdiaker@gmail.com',
     url='https://github.com/erdiaker/iomidi',
-    packages=['iomidi']
+    py_modules=['iomidi']
   )
