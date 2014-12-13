@@ -1,5 +1,5 @@
-PY-MIDI-IO
+iomidi
 ==============
 
-Python library for basic MIDI IO. Work in progress.
+Python library for basic MIDI input and output. Work in progress.
 
