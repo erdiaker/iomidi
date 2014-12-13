@@ -106,7 +106,7 @@ class MIDITrack:
     self.events.append(event)
 
 class MIDIFile:
-  def __init__(self, header=None, tracks=None):
+  def __init__(self, header, tracks, **kwargs):
     self.header = header if header else MIDIHeader()
     self.header.trackCount = len(tracks)
     self.tracks = tracks
@@ -247,7 +247,6 @@ def _readVarLen(f):
 #-----------------------------------------------
 # MIDI Writer
 
-# TODO
 class MIDIWriter:
 
   def write(self, fileName, midi):
@@ -346,7 +345,6 @@ def _writeVarLen(f, n):
 #-----------------------------------------------
 # Test
 
-# TODO
 def _test():
   mr = MIDIReader()
   mf = mr.read('example.mid')
