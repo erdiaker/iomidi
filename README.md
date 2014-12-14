@@ -1,7 +1,9 @@
 iomidi
 ==============
 
-This is a Python library for basic MIDI input and output.
+This is a Python library for basic MIDI input and output. 
+
+It works for me, but hasn't been tested well beyond my projects. So, any bug reports or feature requests are appreciated. 
 
 ## Installation
 
@@ -34,7 +36,7 @@ track = MIDITrack()
 # A MIDI track is a series of one or more events.
 # Create some events.
 pressC = NoteOnEvent(
-  delta=100,    # time to wait after the previous event in milliseconds
+  delta=100,    # time to wait after the previous event in terms of ticks
   channel=0,    # midi channel
   key=60,       # midi note, 60 is middle C
   velocity=100) # pressure of the key press
