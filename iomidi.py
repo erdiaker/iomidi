@@ -93,7 +93,7 @@ class SystemExclusiveEvent(object):
 # MIDI chunks
 
 class MIDIHeader:
-  def __init__(self, frmt=1, division=96, trackCount=0):
+  def __init__(self, frmt=1, division=220, trackCount=0):
     self.frmt = frmt
     self.division = division
     self.trackCount = trackCount
@@ -105,10 +105,10 @@ class MIDITrack:
   def addEvent(self, event):
     self.events.append(event)
 
-class MIDIFile:
-  def __init__(self, header, tracks, **kwargs):
+class MIDI:
+  def __init__(self, header=None, tracks=None):
     self.header = header if header else MIDIHeader()
-    self.header.trackCount = len(tracks)
+    self.header.trackCount = len(tracks) if tracks else 0
     self.tracks = tracks
    
 #-----------------------------------------------
@@ -125,7 +125,7 @@ class MIDIReader:
       for i in range(header.trackCount):
         track = self._readTrack(f)
         tracks.append(track)
-    return MIDIFile(header=header, tracks=tracks)
+    return MIDI(header=header, tracks=tracks)
 
   def _readHeader(self, f):
     buff = f.read(4)
@@ -236,7 +236,7 @@ def _readInt(f, byteCount):
 def _readVarLen(f):
   retVal = 0
   while True:
-    retVal = retVal << 8
+    retVal = retVal << 7
     byte = ord(f.read(1))
     retVal += byte & 0x7F
     # if the 8th bit of the last byte is 0, stop reading.
@@ -333,29 +333,15 @@ def _writeInt(f, byteCount, n):
     f.write(chr((n >> (i*8) & 0xFF)))
 
 def _writeVarLen(f, n):
-  bits = n & 0x7F
-  f.write(chr(bits))
-  n = n >> 7
-
-  while n > 0: 
-    bits = (n & 0x7F) | 0x80
-    f.write(chr(bits))
+  buff = []
+  while True:
+    byte = n & 0x7F
+    buff.append(byte)
     n = n >> 7
+    if n == 0:
+      break
 
-#-----------------------------------------------
-# Test
-
-def _test():
-  mr = MIDIReader()
-  mf = mr.read('example.mid')
-  for track in mf.tracks:
-    for event in track.events:
-      print(event)
-
-  mw = MIDIWriter()
-  mw.write('example2.mid', mf)
-
-if __name__ == '__main__':
-  _test()
-
+  buff = [buff[0]] + [byte | 0x80 for byte in buff[1:]]
+  for byte in reversed(buff):
+    f.write(chr(byte))
   
