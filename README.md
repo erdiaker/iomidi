@@ -24,7 +24,7 @@ This should install `iomidi` in your `site-packages` directory.
 
 ## Examples
 
-### Creating a MIDI track
+### Creating a MIDI file
 
 ```python
 from iomidi import *
