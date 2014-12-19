@@ -51,11 +51,11 @@ releaseC = NoteOffEvent(
 track.addEvent(pressC)
 track.addEvent(releaseC)
 
-# Add a meta event to the denote the end of track
+# Add a meta event to denote the end of track
 endOfTrack = EndOfTrackEvent(delta=1)
 track.addEvent(endOfTrack)
 
-# Create a MIDI structure with the track.
+# Create a MIDI structure, put the track in it.
 midi = MIDI(tracks=[track])
 
 # Write the midi structure into a file.
