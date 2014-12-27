@@ -1,6 +1,7 @@
 
 from collections import namedtuple
 from abc import ABCMeta
+from io import BytesIO
 
 #-----------------------------------------------
 # Constants 
@@ -248,7 +249,6 @@ def _readVarLen(f):
 # MIDI Writer
 
 class MIDIWriter:
-
   def write(self, fileName, midi):
     with open(fileName, 'wb') as f:
       self._writeHeader(f, midi.header)
@@ -264,9 +264,13 @@ class MIDIWriter:
 
   def _writeTrack(self, f, track):
     f.write(_CHUNK_TYPE_TRACK)
-    _writeInt(f, 4, len(track.events)*4) #TODO: fix.
+
+    buff = BytesIO()
     for event in track.events:
-      self._writeEvent(f, event)
+      self._writeEvent(buff, event)
+
+    _writeInt(f, 4, len(buff.getvalue()))
+    f.write(buff.getvalue())
 
   def _writeEvent(self, f, event):
     _writeVarLen(f, event.delta)
