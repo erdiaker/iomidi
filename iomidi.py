@@ -91,6 +91,16 @@ class SystemExclusiveEvent(object):
     return "%s(%r)" % (self.__class__.__name__, self.__dict__)
 
 #-----------------------------------------------
+# Unknown Events
+
+class UnknownEvent(object):
+  def __init__(self, data, **kwargs):
+    self.data = data
+
+  def __repr__(self):
+    return "%s(%r)" % (self.__class__.__name__, self.__dict__)
+
+#-----------------------------------------------
 # MIDI chunks
 
 class MIDIHeader:
@@ -181,7 +191,7 @@ class MIDIReader:
     if metaType == _META_END_OF_TRACK:
       event = EndOfTrackEvent(delta)
     else:
-      event = MetaEvent(delta, metaType, length, data)
+      event = MetaEvent(delta, metaType, data)
     return event
 
   def _readMIDIEvent(self, delta, prefix, f):
@@ -219,10 +229,11 @@ class MIDIReader:
       event = ChannelPressureEvent(delta, channel, val)
     elif status == _STATUS_PITCH_WHEEL_CHANGE:
       least = _readInt(f, 1)
-      most = _read(f, 1)
+      most = _readInt(f, 1)
       event = PitchWheelChangeEvent(delta, channel, least, most)
     else:
-      event = MIDIEvent() #TODO: handle it.
+      event = UnknownEvent(delta)
+      f.seek(-1, 1)
 
     return event
 
@@ -273,13 +284,16 @@ class MIDIWriter:
     f.write(buff.getvalue())
 
   def _writeEvent(self, f, event):
-    _writeVarLen(f, event.delta)
-    if isinstance(event, SystemExclusiveEvent):
-      self._writeSystemExclusiveEvent(f, event)
-    elif isinstance(event, MetaEvent):
-      self._writeMetaEvent(f, event)
+    if isinstance(event, UnknownEvent):
+      self._writeUnknownEvent(f, event)
     else:
-      self._writeMIDIEvent(f, event)
+      _writeVarLen(f, event.delta)
+      if isinstance(event, SystemExclusiveEvent):
+        self._writeSystemExclusiveEvent(f, event)
+      elif isinstance(event, MetaEvent):
+        self._writeMetaEvent(f, event)
+      else:
+        self._writeMIDIEvent(f, event)
 
   def _writeMIDIEvent(self, f, event):
     if isinstance(event, NoteOffEvent):
@@ -328,6 +342,9 @@ class MIDIWriter:
     _writeInt(f, 1, len(event.data))
     if event.data:
       f.write(event.data)
+
+  def _writeUnknownEvent(self, f, event):
+    _writeInt(f, 1, event.data)
       
 def _concatPrefix(status, channel):
   return (status << 4) + channel
