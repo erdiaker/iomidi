@@ -1,7 +1,7 @@
 
 from collections import namedtuple
 from abc import ABCMeta
-from io import BytesIO
+import io
 
 #-----------------------------------------------
 # Constants 
@@ -91,16 +91,6 @@ class SystemExclusiveEvent(object):
     return "%s(%r)" % (self.__class__.__name__, self.__dict__)
 
 #-----------------------------------------------
-# Unknown Events
-
-class UnknownEvent(object):
-  def __init__(self, data, **kwargs):
-    self.data = data
-
-  def __repr__(self):
-    return "%s(%r)" % (self.__class__.__name__, self.__dict__)
-
-#-----------------------------------------------
 # MIDI chunks
 
 class MIDIHeader:
@@ -127,7 +117,8 @@ class MIDI:
 
 class MIDIReader:
   def __init__(self):
-    self._runningStatus = None
+    self._runningStatus = 0
+    self._byteCount = 0
 
   def read(self, fileName):
     with open(fileName, 'rb') as f:
@@ -139,25 +130,25 @@ class MIDIReader:
     return MIDI(header=header, tracks=tracks)
 
   def _readHeader(self, f):
-    buff = f.read(4)
+    buff = self._readBlock(f, 4)
     if buff != _CHUNK_TYPE_HEADER:
       raise MIDIIOError('Invalid MIDI header identifier.')
 
-    length = _readInt(f, 4)
-    frmt = _readInt(f, 2)
-    trackCount = _readInt(f, 2)
-    division = _readInt(f, 2)
+    length = self._readInt(f, 4)
+    frmt = self._readInt(f, 2)
+    trackCount = self._readInt(f, 2)
+    division = self._readInt(f, 2)
     # consume remainder (for non-standard headers)
-    f.read(length - 6)
+    self._readBlock(f, length - 6)
 
     return MIDIHeader(frmt, division, trackCount)
 
   def _readTrack(self, f):
-    buff = f.read(4)
+    buff = self._readBlock(f, 4)
     if buff != _CHUNK_TYPE_TRACK:
       raise MIDIIOError('Invalid MIDI track identifier.')
 
-    length = _readInt(f, 4)
+    length = self._readInt(f, 4)
     track = MIDITrack()
 
     while True:
@@ -168,8 +159,8 @@ class MIDIReader:
     return track
 
   def _readEvent(self, f):
-    delta = _readVarLen(f)
-    prefix = _readInt(f, 1)
+    delta = self._readVarLen(f)
+    prefix = self._readInt(f, 1)
 
     if prefix == _PREFIX_SYSEX or prefix == _PREFIX_SYSEX_NOXMIT:
       event = self._readSystemExclusiveEvent(delta, prefix, f)
@@ -180,14 +171,14 @@ class MIDIReader:
     return event
 
   def _readSystemExclusiveEvent(self, delta, prefix, f):
-    length = _readVarLen(f)
-    data = f.read(length)
+    length = self._readVarLen(f)
+    data = self._readBlock(f, length)
     return SystemExclusiveEvent(delta, prefix, data)
    
   def _readMetaEvent(self, delta, prefix, f):
-    metaType = _readInt(f, 1)
-    length = _readVarLen(f)
-    data = f.read(length)
+    metaType = self._readInt(f, 1)
+    length = self._readVarLen(f)
+    data = self._readBlock(f, length)
     if metaType == _META_END_OF_TRACK:
       event = EndOfTrackEvent(delta)
     else:
@@ -195,66 +186,71 @@ class MIDIReader:
     return event
 
   def _readMIDIEvent(self, delta, prefix, f):
-    status = prefix >> 4
-    channel = prefix & 0xF
-    
     # use the status of the last event,
     # if the current status is not set.
-    if status != 0:
-      self._runningStatus = status
+    if (prefix >> 7) & 1:
+      self._runningStatus = prefix
     else:
-      status = self._runningStatus
+      prefix = self._runningStatus
+      f.seek(-1, io.SEEK_CUR)
+      self._byteCount -= 1 # TODO: wrap it
+
+    status = prefix >> 4
+    channel = prefix & 0xF
 
     if status == _STATUS_NOTE_OFF:
-      key = _readInt(f, 1) 
-      vel = _readInt(f, 1)
+      key = self._readInt(f, 1) 
+      vel = self._readInt(f, 1)
       event = NoteOffEvent(delta, channel, key, vel)
     elif status == _STATUS_NOTE_ON:
-      key = _readInt(f, 1) 
-      vel = _readInt(f, 1)
+      key = self._readInt(f, 1) 
+      vel = self._readInt(f, 1)
       event = NoteOnEvent(delta, channel, key, vel)
     elif status == _STATUS_POLY_KEY_PRESS:
-      key = _readInt(f, 1) 
-      val = _readInt(f, 1)
+      key = self._readInt(f, 1) 
+      val = self._readInt(f, 1)
       event = PolyphonicKeyPressureEvent(delta, channel, key, val)
     elif status == _STATUS_CONTROL_CHANGE:
-      controller = _readInt(f, 1)
-      val = _readInt(f, 1)
+      controller = self._readInt(f, 1)
+      val = self._readInt(f, 1)
       event = ControlChangeEvent(delta, channel, controller, val)
     elif status == _STATUS_PROGRAM_CHANGE:
-      val = _readInt(f, 1)
+      val = self._readInt(f, 1)
       event = ProgramChangeEvent(delta, channel, val)
     elif status == _STATUS_CHANNEL_PRESS:
-      val = _readInt(f, 1)
+      val = self._readInt(f, 1)
       event = ChannelPressureEvent(delta, channel, val)
     elif status == _STATUS_PITCH_WHEEL_CHANGE:
-      least = _readInt(f, 1)
-      most = _readInt(f, 1)
+      least = self._readInt(f, 1)
+      most = self._readInt(f, 1)
       event = PitchWheelChangeEvent(delta, channel, least, most)
-    else:
-      event = UnknownEvent(delta)
-      f.seek(-1, 1)
 
     return event
 
-def _readInt(f, byteCount):
-  buff = f.read(byteCount)
-  retVal = 0
-  for byte in buff:
-    retVal = retVal << 8
-    retVal += ord(byte)
-  return retVal
+  def _readInt(self, f, byteCount):
+    buff = f.read(byteCount)
+    retVal = 0
+    for byte in buff: #TODO: byte is '\0'
+      retVal = retVal << 8
+      retVal += ord(byte)
+    self._byteCount += byteCount
+    return retVal
 
-def _readVarLen(f):
-  retVal = 0
-  while True:
-    retVal = retVal << 7
-    byte = ord(f.read(1))
-    retVal += byte & 0x7F
-    # if the 8th bit of the last byte is 0, stop reading.
-    if (byte >> 7) == 0:
-      break
-  return retVal
+  def _readVarLen(self, f):
+    retVal = 0
+    while True:
+      retVal = retVal << 7
+      byte = ord(f.read(1))
+      retVal += byte & 0x7F
+      self._byteCount += 1
+      # if the 8th bit of the last byte is 0, stop reading.
+      if (byte >> 7) == 0:
+        break
+    return retVal
+
+  def _readBlock(self, f, byteCount):
+    self._byteCount += byteCount
+    return f.read(byteCount)
 
 #-----------------------------------------------
 # MIDI Writer
@@ -267,102 +263,99 @@ class MIDIWriter:
         self._writeTrack(f, track)
 
   def _writeHeader(self, f, header):
-    f.write(_CHUNK_TYPE_HEADER)
-    _writeInt(f, 4, 6)
-    _writeInt(f, 2, header.frmt) 
-    _writeInt(f, 2, header.trackCount) 
-    _writeInt(f, 2, header.division) 
+    self._writeBlock(f, _CHUNK_TYPE_HEADER)
+    self._writeInt(f, 4, 6)
+    self._writeInt(f, 2, header.frmt) 
+    self._writeInt(f, 2, header.trackCount) 
+    self._writeInt(f, 2, header.division) 
 
   def _writeTrack(self, f, track):
-    f.write(_CHUNK_TYPE_TRACK)
+    self._writeBlock(f, _CHUNK_TYPE_TRACK)
 
-    buff = BytesIO()
+    buff = io.BytesIO()
     for event in track.events:
       self._writeEvent(buff, event)
 
-    _writeInt(f, 4, len(buff.getvalue()))
-    f.write(buff.getvalue())
+    self._writeInt(f, 4, len(buff.getvalue()))
+    self._writeBlock(f, buff.getvalue())
 
   def _writeEvent(self, f, event):
-    if isinstance(event, UnknownEvent):
-      self._writeUnknownEvent(f, event)
+    self._writeVarLen(f, event.delta)
+    if isinstance(event, SystemExclusiveEvent):
+      self._writeSystemExclusiveEvent(f, event)
+    elif isinstance(event, MetaEvent):
+      self._writeMetaEvent(f, event)
     else:
-      _writeVarLen(f, event.delta)
-      if isinstance(event, SystemExclusiveEvent):
-        self._writeSystemExclusiveEvent(f, event)
-      elif isinstance(event, MetaEvent):
-        self._writeMetaEvent(f, event)
-      else:
-        self._writeMIDIEvent(f, event)
+      self._writeMIDIEvent(f, event)
 
   def _writeMIDIEvent(self, f, event):
     if isinstance(event, NoteOffEvent):
-      prefix = _concatPrefix(_STATUS_NOTE_OFF, event.channel)
-      _writeInt(f, 1, prefix)
-      _writeInt(f, 1, event.key)
-      _writeInt(f, 1, event.velocity)
+      prefix = self._concatPrefix(_STATUS_NOTE_OFF, event.channel)
+      self._writeInt(f, 1, prefix)
+      self._writeInt(f, 1, event.key)
+      self._writeInt(f, 1, event.velocity)
     elif isinstance(event, NoteOnEvent):
-      prefix = _concatPrefix(_STATUS_NOTE_ON, event.channel)
-      _writeInt(f, 1, prefix)
-      _writeInt(f, 1, event.key)
-      _writeInt(f, 1, event.velocity)
+      prefix = self._concatPrefix(_STATUS_NOTE_ON, event.channel)
+      self._writeInt(f, 1, prefix)
+      self._writeInt(f, 1, event.key)
+      self._writeInt(f, 1, event.velocity)
     elif isinstance(event, PolyphonicKeyPressureEvent):
-      prefix = _concatPrefix(_STATUS_POLY_KEY_PRESS , event.channel)
-      _writeInt(f, 1, prefix)
-      _writeInt(f, 1, event.key)
-      _writeInt(f, 1, event.velocity)
+      prefix = self._concatPrefix(_STATUS_POLY_KEY_PRESS , event.channel)
+      self._writeInt(f, 1, prefix)
+      self._writeInt(f, 1, event.key)
+      self._writeInt(f, 1, event.velocity)
     elif isinstance(event, ControlChangeEvent):
-      prefix = _concatPrefix(_STATUS_CONTROL_CHANGE, event.channel)
-      _writeInt(f, 1, prefix)
-      _writeInt(f, 1, event.controller)
-      _writeInt(f, 1, event.value)
+      prefix = self._concatPrefix(_STATUS_CONTROL_CHANGE, event.channel)
+      self._writeInt(f, 1, prefix)
+      self._writeInt(f, 1, event.controller)
+      self._writeInt(f, 1, event.value)
     elif isinstance(event, ProgramChangeEvent):
-      prefix = _concatPrefix(_STATUS_PROGRAM_CHANGE, event.channel)
-      _writeInt(f, 1, prefix)
-      _writeInt(f, 1, event.value)
+      prefix = self._concatPrefix(_STATUS_PROGRAM_CHANGE, event.channel)
+      self._writeInt(f, 1, prefix)
+      self._writeInt(f, 1, event.value)
     elif isinstance(event, ChannelPressureEvent):
-      prefix = _concatPrefix(_STATUS_CHANNEL_PRESS, event.channel)
-      _writeInt(f, 1, prefix)
-      _writeInt(f, 1, event.value)
+      prefix = self._concatPrefix(_STATUS_CHANNEL_PRESS, event.channel)
+      self._writeInt(f, 1, prefix)
+      self._writeInt(f, 1, event.value)
     elif isinstance(event, PitchWheelChangeEvent):
-      prefix = _concatPrefix(_STATUS_PITCH_WHEEL_CHANGE, event.channel)
-      _writeInt(f, 1, prefix)
-      _writeInt(f, 1, event.least)
-      _writeInt(f, 1, event.most)
+      prefix = self._concatPrefix(_STATUS_PITCH_WHEEL_CHANGE, event.channel)
+      self._writeInt(f, 1, prefix)
+      self._writeInt(f, 1, event.least)
+      self._writeInt(f, 1, event.most)
 
   def _writeMetaEvent(self, f, event):
-    _writeInt(f, 1, _PREFIX_META)
-    _writeInt(f, 1, event.metaType)
-    _writeInt(f, 1, len(event.data))
+    self._writeInt(f, 1, _PREFIX_META)
+    self._writeInt(f, 1, event.metaType)
+    self._writeInt(f, 1, len(event.data))
     if event.data:
-      f.write(event.data)
+      self._writeBlock(f, event.data)
 
   def _writeSystemExclusiveEvent(self, f, event):
-    _writeInt(f, 1, event.sysExType)
-    _writeInt(f, 1, len(event.data))
+    self._writeInt(f, 1, event.sysExType)
+    self._writeInt(f, 1, len(event.data))
     if event.data:
-      f.write(event.data)
-
-  def _writeUnknownEvent(self, f, event):
-    _writeInt(f, 1, event.data)
+      self._writeBlock(f, data)
       
-def _concatPrefix(status, channel):
-  return (status << 4) + channel
+  def _concatPrefix(self, status, channel):
+    return (status << 4) + channel
 
-def _writeInt(f, byteCount, n):
-  for i in range(byteCount-1,-1,-1):
-    f.write(chr((n >> (i*8) & 0xFF)))
+  def _writeInt(self, f, byteCount, n):
+    for i in range(byteCount-1,-1,-1):
+      f.write(chr((n >> (i*8) & 0xFF)))
 
-def _writeVarLen(f, n):
-  buff = []
-  while True:
-    byte = n & 0x7F
-    buff.append(byte)
-    n = n >> 7
-    if n == 0:
-      break
+  def _writeVarLen(self, f, n):
+    buff = []
+    while True:
+      byte = n & 0x7F
+      buff.append(byte)
+      n = n >> 7
+      if n == 0:
+        break
 
-  buff = [buff[0]] + [byte | 0x80 for byte in buff[1:]]
-  for byte in reversed(buff):
-    f.write(chr(byte))
+    buff = [buff[0]] + [byte | 0x80 for byte in buff[1:]]
+    for byte in reversed(buff):
+      f.write(chr(byte))
+
+  def _writeBlock(self, f, data):
+    f.write(data)
   
