@@ -1,7 +1,6 @@
 
-from collections import namedtuple
-from abc import ABCMeta
 import io
+import json
 
 #-----------------------------------------------
 # Constants 
@@ -30,37 +29,61 @@ class MIDIIOError(IOError):
   pass
 
 #-----------------------------------------------
+# Mixins
+
+class RepresentMixin(object):
+  def __repr__(self):
+    s = '{\'%s\': %r}' % (self.__class__.__name__, self.__dict__)
+    s = s.replace('\'', '\"')
+    return json.dumps(json.loads(s), indent=2)
+
+#-----------------------------------------------
 # MIDI Events
-class MIDIEvent(object):
-  __metaclass__ = ABCMeta
 
-NoteOffEvent = namedtuple('NoteOffEvent', 
-  'delta channel key velocity')
-MIDIEvent.register(NoteOffEvent)
+class MIDIEvent(RepresentMixin):
+  def __init__(self, delta, channel):
+    self.delta = delta
+    self.channel = channel
 
-NoteOnEvent = namedtuple('NoteOnEvent', 
-  'delta channel key velocity')
-MIDIEvent.register(NoteOnEvent)
+class NoteOffEvent(MIDIEvent):
+  def __init__(self, delta, channel, key, velocity): 
+    super(NoteOffEvent, self).__init__(delta, channel)
+    self.key = key
+    self.velocity = velocity
 
-PolyphonicKeyPressureEvent = namedtuple('PolyphonicKeyPressureEvent', 
-  'delta channel key velocity')
-MIDIEvent.register(PolyphonicKeyPressureEvent)
+class NoteOnEvent(MIDIEvent):
+  def __init__(self, delta, channel, key, velocity): 
+    super(NoteOnEvent, self).__init__(delta, channel)
+    self.key = key
+    self.velocity = velocity
 
-ControlChangeEvent = namedtuple('ControlChangeEvent', 
-  'delta channel controller value')
-MIDIEvent.register(ControlChangeEvent)
+class PolyphonicKeyPressureEvent(MIDIEvent):
+  def __init__(self, delta, channel, key, velocity):
+    super(PolyphonicKeyPressureEvent, self).__init__(delta, channel)
+    self.key = key
+    self.velocity = velocity
 
-ProgramChangeEvent = namedtuple('ProgramChangeEvent', 
-  'delta channel value')
-MIDIEvent.register(ProgramChangeEvent)
+class ControlChangeEvent(MIDIEvent):
+  def __init__(self, delta, channel, controller, value):
+    super(ControlChangeEvent, self).__init__(delta, channel)
+    self.controller = controller
+    self.value = value
 
-ChannelPressureEvent = namedtuple('ChannelPressureEvent', 
-  'delta, channel value')
-MIDIEvent.register(ChannelPressureEvent)
+class ProgramChangeEvent(MIDIEvent):
+  def __init__(self, delta, channel, value):
+    super(ProgramChangeEvent, self).__init__(delta, channel)
+    self.value = value
 
-PitchWheelChangeEvent = namedtuple('PitchWheelChangeEvent', 
-  'delta channel least most')
-MIDIEvent.register(PitchWheelChangeEvent)
+class ChannelPressureEvent(MIDIEvent):
+  def __init__(self, delta, channel, value):
+    super(ChannelPressureEvent, self).__init__(delta, channel)
+    self.value = value
+
+class PitchWheelChangeEvent(MIDIEvent): 
+  def __init__(self, delta, channel, least, most):
+    super(PitchWheelChangeEvent, self).__init__(delta, channel)
+    self.least = least
+    self.most = most
 
 #-----------------------------------------------
 # Meta Events
@@ -72,7 +95,12 @@ class MetaEvent(object):
     self.data = data
 
   def __repr__(self):
-    return "%s(%r)" % (self.__class__.__name__, self.__dict__)
+    # TODO: "data" may break repr(), since json.dumps() is used for formatting.
+    # Escape it properly, then put back on repr().
+    # Same for SystemExclusiveEvent.
+    d = dict(self.__dict__) # copy
+    del d['data']
+    return '{\'%s\': %r}' % (self.__class__.__name__, d)
 
 class EndOfTrackEvent(MetaEvent):
   def __init__(self, delta, **kwargs):
@@ -88,25 +116,28 @@ class SystemExclusiveEvent(object):
     self.data = data
 
   def __repr__(self):
-    return "%s(%r)" % (self.__class__.__name__, self.__dict__)
+    #TODO: see MetaEvent.
+    d = dict(self.__dict__)
+    del d['data']
+    return '{\'%s\': %r}' % (self.__class__.__name__, d)
 
 #-----------------------------------------------
 # MIDI chunks
 
-class MIDIHeader:
+class MIDIHeader(RepresentMixin):
   def __init__(self, frmt=1, division=220, trackCount=0):
     self.frmt = frmt
     self.division = division
     self.trackCount = trackCount
 
-class MIDITrack:
+class MIDITrack(RepresentMixin):
   def __init__(self):
     self.events = []
 
   def addEvent(self, event):
     self.events.append(event)
 
-class MIDI:
+class MIDI(RepresentMixin):
   def __init__(self, header=None, tracks=None):
     self.header = header if header else MIDIHeader()
     self.header.trackCount = len(tracks) if tracks else 0
@@ -115,7 +146,7 @@ class MIDI:
 #-----------------------------------------------
 # MIDI Reader
 
-class MIDIReader:
+class MIDIReader(object):
   def __init__(self):
     self._runningStatus = 0
     self._byteCount = 0
@@ -255,7 +286,7 @@ class MIDIReader:
 #-----------------------------------------------
 # MIDI Writer
 
-class MIDIWriter:
+class MIDIWriter(object):
   def write(self, fileName, midi):
     with open(fileName, 'wb') as f:
       self._writeHeader(f, midi.header)
@@ -359,3 +390,14 @@ class MIDIWriter:
   def _writeBlock(self, f, data):
     f.write(data)
   
+#-----------------------------------------------
+# Module functions
+
+def read(fileName):
+  reader = MIDIReader()
+  return reader.read(fileName)
+
+def write(fileName, midi):
+  writer = MIDIWriter()
+  writer.write(fileName, midi)
+
